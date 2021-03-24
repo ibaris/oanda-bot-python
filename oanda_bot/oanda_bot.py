@@ -16,41 +16,48 @@ import time
 import dateutil.parser
 import matplotlib.dates as mdates
 
+plt.style.use("bmh")
+
 
 class Bot(object):
     WINTER_TIME = 21
     SUMMER_TIME = 20
 
-    def __init__(
-        self,
-        *,
-        account_id: str,
-        access_token: str,
-        environment: str = "practice",
-        instrument: str = "EUR_USD",
-        granularity: str = "D",
-        trading_time: int = SUMMER_TIME,
-        slack_webhook_url: str = "",
-        discord_webhook_url: str = "",
-        line_notify_token: str = "",
-    ) -> None:
+    def __init__(self,
+                 *,
+                 account_id: str,
+                 access_token: str,
+                 environment: str = "practice",
+                 instrument: str = "EUR_USD",
+                 granularity: str = "D",
+                 trading_time: int = SUMMER_TIME,
+                 slack_webhook_url: str = "",
+                 discord_webhook_url: str = "",
+                 line_notify_token: str = "",
+                 strategy_name: str = "") -> None:
         self.BUY = 1
         self.SELL = -1
         self.EXIT = False
         self.ENTRY = True
         self.trading_time = trading_time
         self.account_id = account_id
+        self.strategy_name = strategy_name
+        self.result = None
+
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": "Bearer {}".format(access_token),
         }
+
         if environment == "practice":
             self.base_url = "https://api-fxpractice.oanda.com"
         else:
             self.base_url = "https://api-fxtrade.oanda.com"
+
         self.sched = BlockingScheduler()
         self.instrument = instrument
         self.granularity = granularity
+
         if len(granularity) > 1:
             if granularity[0] == "S":
                 self.sched.add_job(self._job, "cron", second="*/" + granularity[1:])
@@ -93,12 +100,10 @@ class Bot(object):
         self.units = 10000  # currency unit
         self.take_profit = 0
         self.stop_loss = 0
-        self.buy_entry = (
-            self.buy_exit
-        ) = self.sell_entry = self.sell_exit = pd.DataFrame()
+        self.buy_entry = (self.buy_exit) = self.sell_entry = self.sell_exit = pd.DataFrame()
 
     def _candles(
-        self, *, from_date: str = "", to_date: str = "", count: str = "5000"
+            self, *, from_date: str = "", to_date: str = "", count: str = "5000"
     ) -> pd.DataFrame:
         url = "{}/v3/instruments/{}/candles".format(self.base_url, self.instrument)
         params = {"granularity": self.granularity, "count": count}
@@ -159,8 +164,8 @@ class Bot(object):
                 )
         self.df = (
             pd.DataFrame(data, columns=["T", "O", "H", "L", "C", "V"])
-            .set_index("T")
-            .drop_duplicates()
+                .set_index("T")
+                .drop_duplicates()
         )
         return self.df
 
@@ -222,9 +227,9 @@ class Bot(object):
         hour = utcnow.hour
         weekday = utcnow.weekday()
         if (
-            (4 == weekday and self.trading_time < hour)
-            or 5 == weekday
-            or (6 == weekday and self.trading_time >= hour)
+                (4 == weekday and self.trading_time < hour)
+                or 5 == weekday
+                or (6 == weekday and self.trading_time >= hour)
         ):
             return True
         return False
@@ -283,11 +288,11 @@ class Bot(object):
             self._error("status_code {} - {}".format(res.status_code, res.json()))
         return res
 
-    def report(self, *, days: int = -1, filename: str = "",) -> None:
+    def report(self, *, days: int = -1, filename: str = "", ) -> None:
         tran = self.__transactions(
             {
                 "from": (
-                    datetime.datetime.utcnow().date() + datetime.timedelta(days=days)
+                        datetime.datetime.utcnow().date() + datetime.timedelta(days=days)
                 ),
                 "type": "ORDER_FILL",
             }
@@ -366,21 +371,19 @@ class Bot(object):
     def strategy(self) -> None:
         pass
 
-    def backtest(
-        self, *, from_date: str = "", to_date: str = "", filename: str = ""
-    ) -> None:
-        csv = "{}-{}-{}-{}.csv".format(
-            self.instrument, self.granularity, from_date, to_date
-        )
+    def backtest(self, *, from_date: str = "", to_date: str = "", filename: str = "",
+                 show_plot: bool = True, save_plot: bool = True,
+                 verbose: bool = False, **kwargs) -> None:
+        csv = "{}-{}-{}-{}.csv".format(self.instrument, self.granularity, from_date, to_date)
         if os.path.exists(csv):
-            self.df = pd.read_csv(
-                csv, index_col=0, parse_dates=True, infer_datetime_format=True
-            )
+            self.df = pd.read_csv(csv, index_col=0, parse_dates=True, infer_datetime_format=True)
         else:
             self._candles(from_date=from_date, to_date=to_date)
             if from_date != "" and to_date != "":
                 self.df.to_csv(csv)
-        self.strategy()
+
+        self.strategy(**kwargs)
+
         o = self.df.O.values
         L = self.df.L.values
         h = self.df.H.values
@@ -429,7 +432,7 @@ class Bot(object):
             if long_trade[i] < 0:
                 if buy_price != 0:
                     long_pl[i] = (
-                        -(buy_price + long_trade[i]) * self.units
+                            -(buy_price + long_trade[i]) * self.units
                     )  # profit/loss fixed
                     long_rr.append(
                         round(long_pl[i] / buy_price * 100, 2)
@@ -441,12 +444,8 @@ class Bot(object):
             # sell exit
             if short_trade[i] < 0:
                 if sell_price != 0:
-                    short_pl[i] = (
-                        sell_price + short_trade[i]
-                    ) * self.units  # profit/loss fixed
-                    short_rr.append(
-                        round(short_pl[i] / sell_price * 100, 2)
-                    )  # short return rate
+                    short_pl[i] = (sell_price + short_trade[i]) * self.units  # profit/loss fixed
+                    short_rr.append(round(short_pl[i] / sell_price * 100, 2))  # short return rate
                     sell_price = 0
                 else:
                     short_trade[i] = 0
@@ -456,12 +455,8 @@ class Bot(object):
                 stop_price = buy_price - self.stop_loss * self.point
                 if L[i] <= stop_price:
                     long_trade[i] = -stop_price
-                    long_pl[i] = (
-                        -(buy_price + long_trade[i]) * self.units
-                    )  # profit/loss fixed
-                    long_rr.append(
-                        round(long_pl[i] / buy_price * 100, 2)
-                    )  # long return rate
+                    long_pl[i] = (-(buy_price + long_trade[i]) * self.units)  # profit/loss fixed
+                    long_rr.append(round(long_pl[i] / buy_price * 100, 2))  # long return rate
                     buy_price = 0
                     stop_loss += 1
 
@@ -470,12 +465,8 @@ class Bot(object):
                 limit_price = buy_price + self.take_profit * self.point
                 if h[i] >= limit_price:
                     long_trade[i] = -limit_price
-                    long_pl[i] = (
-                        -(buy_price + long_trade[i]) * self.units
-                    )  # profit/loss fixed
-                    long_rr.append(
-                        round(long_pl[i] / buy_price * 100, 2)
-                    )  # long return rate
+                    long_pl[i] = (-(buy_price + long_trade[i]) * self.units)  # profit/loss fixed
+                    long_rr.append(round(long_pl[i] / buy_price * 100, 2))  # long return rate
                     buy_price = 0
                     take_profit += 1
 
@@ -484,12 +475,8 @@ class Bot(object):
                 stop_price = sell_price + self.stop_loss * self.point
                 if h[i] >= stop_price:
                     short_trade[i] = -stop_price
-                    short_pl[i] = (
-                        sell_price + short_trade[i]
-                    ) * self.units  # profit/loss fixed
-                    short_rr.append(
-                        round(short_pl[i] / sell_price * 100, 2)
-                    )  # short return rate
+                    short_pl[i] = (sell_price + short_trade[i]) * self.units  # profit/loss fixed
+                    short_rr.append(round(short_pl[i] / sell_price * 100, 2))  # short return rate
                     sell_price = 0
                     stop_loss += 1
 
@@ -498,24 +485,14 @@ class Bot(object):
                 limit_price = sell_price - self.take_profit * self.point
                 if L[i] <= limit_price:
                     short_trade[i] = -limit_price
-                    short_pl[i] = (
-                        sell_price + short_trade[i]
-                    ) * self.units  # profit/loss fixed
-                    short_rr.append(
-                        round(short_pl[i] / sell_price * 100, 2)
-                    )  # short return rate
+                    short_pl[i] = (sell_price + short_trade[i]) * self.units  # profit/loss fixed
+                    short_rr.append(round(short_pl[i] / sell_price * 100, 2))  # short return rate
                     sell_price = 0
                     take_profit += 1
 
-        win_trades = np.count_nonzero(long_pl.clip(lower=0)) + np.count_nonzero(
-            short_pl.clip(lower=0)
-        )
-        lose_trades = np.count_nonzero(long_pl.clip(upper=0)) + np.count_nonzero(
-            short_pl.clip(upper=0)
-        )
-        trades = (np.count_nonzero(long_trade) // 2) + (
-            np.count_nonzero(short_trade) // 2
-        )
+        win_trades = np.count_nonzero(long_pl.clip(lower=0)) + np.count_nonzero(short_pl.clip(lower=0))
+        lose_trades = np.count_nonzero(long_pl.clip(upper=0)) + np.count_nonzero(short_pl.clip(upper=0))
+        trades = (np.count_nonzero(long_trade) // 2) + (np.count_nonzero(short_trade) // 2)
         gross_profit = long_pl.clip(lower=0).sum() + short_pl.clip(lower=0).sum()
         gross_loss = long_pl.clip(upper=0).sum() + short_pl.clip(upper=0).sum()
         profit_pl = gross_profit + gross_loss
@@ -526,43 +503,73 @@ class Bot(object):
         s = pd.Series(dtype="object")
         s.loc["total profit"] = round(profit_pl, 3)
         s.loc["total trades"] = trades
-        s.loc["win rate"] = round(win_trades / trades * 100, 3)
-        s.loc["profit factor"] = round(-gross_profit / gross_loss, 3)
-        s.loc["maximum drawdown"] = round(mdd, 3)
-        s.loc["recovery factor"] = round(profit_pl / mdd, 3)
-        s.loc["riskreward ratio"] = round(
-            -(gross_profit / win_trades) / (gross_loss / lose_trades), 3
-        )
-        s.loc["sharpe ratio"] = round(
-            self.return_rate.mean() / self.return_rate.std(), 3
-        )
-        s.loc["average return"] = round(self.return_rate.mean(), 3)
-        s.loc["stop loss"] = stop_loss
-        s.loc["take profit"] = take_profit
-        print(s)
 
-        fig = plt.figure()
-        fig.subplots_adjust(
-            wspace=0.2, hspace=0.5, left=0.095, right=0.95, bottom=0.095, top=0.95
-        )
-        ax1 = fig.add_subplot(3, 1, 1)
-        ax1.plot(self.df.C, label="close")
-        ax1.legend()
-        ax2 = fig.add_subplot(3, 1, 2)
-        ax2.plot(self.equity, label="equity")
-        ax2.legend()
-        ax3 = fig.add_subplot(3, 1, 3)
-        ax3.hist(self.return_rate, 50, rwidth=0.9)
-        ax3.axvline(
-            sum(self.return_rate) / len(self.return_rate),
-            color="orange",
-            label="average return",
-        )
-        ax3.legend()
-        if filename == "":
-            plt.show()
+        if trades <= 0:
+            s.loc["win rate"] = -99999
+            s.loc["profit factor"] = 99999
+            s.loc["win rate"] = -99999
+            s.loc["profit factor"] = -99999
+            s.loc["maximum drawdown"] = -99999
+            s.loc["recovery factor"] = -99999
+            s.loc["riskreward ratio"] = -99999
+            s.loc["sharpe ratio"] = -99999
+            s.loc["average return"] = -99999
+            s.loc["stop loss"] = -99999
+            s.loc["take profit"] = -99999
+            s.loc["sltp ratio"] = 99999
+
         else:
-            plt.savefig(filename)
+            s.loc["win rate"] = round(win_trades / trades * 100, 3)
+            s.loc["profit factor"] = round(-gross_profit / gross_loss, 3)
+            s.loc["maximum drawdown"] = round(mdd, 3)
+            s.loc["recovery factor"] = round(profit_pl / mdd, 3)
+            s.loc["riskreward ratio"] = round(-(gross_profit / win_trades) / (gross_loss / lose_trades), 3)
+            s.loc["sharpe ratio"] = round(self.return_rate.mean() / self.return_rate.std(), 3)
+            s.loc["average return"] = round(self.return_rate.mean(), 3)
+            s.loc["stop loss"] = stop_loss
+            s.loc["take profit"] = take_profit
+            s.loc["sltp ratio"] = stop_loss / take_profit
+
+        if verbose:
+            print(s)
+
+        self.result = s
+        if show_plot:
+            plt.clf()
+            fig = plt.figure(figsize=(13, 8))
+            fig.subplots_adjust(wspace=0.2, hspace=0.5, left=0.095, right=0.95, bottom=0.095, top=0.95)
+            ax1 = fig.add_subplot(3, 1, 1)
+
+            if self.strategy_name != "":
+                header = "Backtest Results for Strategy: {0}".format(self.strategy_name)
+            else:
+                header = "Backtest Results"
+
+            header += "\n(Profit: {0}, Win Rate: {1}, Profit Factor: {2}, RRR: {3}, " \
+                      "SL: {4}, TP: {5})".format(round(s.loc["total profit"], 2), round(s.loc["win rate"], 2),
+                                                 round(s.loc["profit factor"], 2), round(s.loc["riskreward ratio"], 2),
+                                                 round(s.loc["stop loss"], 2), round(s.loc["take profit"], 2))
+
+            plt.clf()
+            plt.title(header, fontsize=10)
+            ax1.plot(self.df.C, label="Close Price", color="#28527a")
+            ax1.set_ylabel("{0}".format(self.instrument.replace("_", "/")))
+            ax1.legend()
+
+            ax2 = fig.add_subplot(3, 1, 2)
+            ax2.plot(self.equity, label="Equity", color="#e40017")
+            ax2.ticklabel_format(style="sci")
+            ax2.legend()
+
+            ax3 = fig.add_subplot(3, 1, 3)
+            ax3.hist(self.return_rate, 50, rwidth=0.9, color="#28527a")
+            ax3.axvline(sum(self.return_rate) / len(self.return_rate), color="#fb743e", label="Average Return")
+            ax3.legend()
+
+            if filename == "":
+                plt.show()
+            elif save_plot:
+                plt.savefig(filename)
 
     def run(self) -> None:
         self.sched.start()
@@ -574,34 +581,34 @@ class Bot(object):
         return self.df[price].ewm(span=period).mean()
 
     def bbands(
-        self, *, period: int = 20, band: int = 2, price: str = "C"
+            self, *, period: int = 20, band: int = 2, price: str = "C"
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         std = self.df[price].rolling(period).std()
         mean = self.df[price].rolling(period).mean()
         return mean + (std * band), mean, mean - (std * band)
 
     def macd(
-        self,
-        *,
-        fast_period: int = 12,
-        slow_period: int = 26,
-        signal_period: int = 9,
-        price: str = "C",
+            self,
+            *,
+            fast_period: int = 12,
+            slow_period: int = 26,
+            signal_period: int = 9,
+            price: str = "C",
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         macd = (
-            self.df[price].ewm(span=fast_period).mean()
-            - self.df[price].ewm(span=slow_period).mean()
+                self.df[price].ewm(span=fast_period).mean()
+                - self.df[price].ewm(span=slow_period).mean()
         )
         signal = macd.ewm(span=signal_period).mean()
         return macd, signal
 
     def stoch(
-        self, *, k_period: int = 5, d_period: int = 3
+            self, *, k_period: int = 5, d_period: int = 3
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         k = (
-            (self.df.C - self.df.L.rolling(k_period).min())
-            / (self.df.H.rolling(k_period).max() - self.df.L.rolling(k_period).min())
-            * 100
+                (self.df.C - self.df.L.rolling(k_period).min())
+                / (self.df.H.rolling(k_period).max() - self.df.L.rolling(k_period).min())
+                * 100
         )
         d = k.rolling(d_period).mean()
         return k, d
@@ -611,12 +618,12 @@ class Bot(object):
 
     def rsi(self, *, period: int = 14, price: str = "C") -> pd.DataFrame:
         return 100 - 100 / (
-            1
-            - self.df[price].diff().clip(lower=0).rolling(period).mean()
-            / self.df[price].diff().clip(upper=0).rolling(period).mean()
+                1
+                - self.df[price].diff().clip(lower=0).rolling(period).mean()
+                / self.df[price].diff().clip(upper=0).rolling(period).mean()
         )
 
     def ao(self, *, fast_period: int = 5, slow_period: int = 34) -> pd.DataFrame:
         return ((self.df.H + self.df.L) / 2).rolling(fast_period).mean() - (
-            (self.df.H + self.df.L) / 2
+                (self.df.H + self.df.L) / 2
         ).rolling(slow_period).mean()
